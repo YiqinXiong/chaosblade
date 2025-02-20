@@ -65,8 +65,8 @@ BLADE_OPERATOR_PROJECT=https://github.com/chaosblade-io/chaosblade-operator.git
 BLADE_OPERATOR_BRANCH=master
 
 # chaosblade-exec-jvm
-BLADE_EXEC_JVM_PROJECT=https://github.com/chaosblade-io/chaosblade-exec-jvm.git
-BLADE_EXEC_JVM_BRANCH=master
+BLADE_EXEC_JVM_PROJECT=https://github.com/YiqinXiong/chaosblade-exec-jvm.git
+BLADE_EXEC_JVM_BRANCH=dev-yqxiong
 
 # chaosblade-exec-cplus
 BLADE_EXEC_CPLUS_PROJECT=https://github.com/chaosblade-io/chaosblade-exec-cplus.git
@@ -108,10 +108,10 @@ build_with_linux_arm: pre_build build_linux_arm_with_arg ## Select scenario buil
 
 # build chaosblade linux version by docker image
 build_linux:  ## Build linux version of all scenarios by docker image
-	make build_with_linux ARGS="cli os cloud middleware cri nsexec kubernetes java cplus check_yaml" upx package
+	make build_with_linux ARGS="cli os cloud middleware cri nsexec kubernetes cplus check_yaml" java upx package
 
 build_linux_arm:  ## Build linux arm version of all scenarios by docker image
-	make build_with_linux_arm ARGS="cli os cloud middleware cri nsexec kubernetes java cplus check_yaml" upx package
+	make build_with_linux_arm ARGS="cli os cloud middleware cri nsexec kubernetes cplus check_yaml" java upx package
 
 build_darwin: pre_build cli os cloud middleware cri cplus java kubernetes upx package check_yaml ## Build all scenarios darwin version
 
@@ -274,7 +274,7 @@ check_yaml:
 
 ## Select scenario build linux version by docker image
 build_linux_with_arg:
-	docker run --rm \
+	docker run --rm --platform linux/amd64 \
 		-v $(shell echo -n ${GOPATH}):/go \
 		-w /go/src/github.com/chaosblade-io/chaosblade \
 		-v ~/.m2/repository:/root/.m2/repository \
