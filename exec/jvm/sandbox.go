@@ -17,11 +17,14 @@
 package jvm
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	osuser "os/user"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -154,12 +157,22 @@ func attach(ctx context.Context, pid, port string, javaHome string) (*spec.Respo
 	return response, username, userid
 }
 
+// getAttachJvmOpts constructs the JVM options for attaching the sandbox agent to the Java process.
 func getAttachJvmOpts(toolsJar string, token string, port string, pid string) string {
-	jvmOpts := fmt.Sprintf("-Xms128M -Xmx128M -Xnoclassgc -ea -Xbootclasspath/a:%s", toolsJar)
+	// Base JVM options
+	baseJvmOpts := "-Xms128M -Xmx128M -Xnoclassgc -ea"
+	jvmOpts := baseJvmOpts
+	// If toolsJar is not empty, add it to the JVM options
+	if toolsJar != "" {
+		jvmOpts = fmt.Sprintf("%s -Xbootclasspath/a:%s", baseJvmOpts, toolsJar)
+	}
+	// Construct sandbox related paths
 	sandboxHome := path.Join(util.GetLibHome(), "sandbox")
 	sandboxLibPath := path.Join(sandboxHome, "lib")
+	// Construct sandbox attach arguments
 	sandboxAttachArgs := fmt.Sprintf("home=%s;token=%s;server.ip=%s;server.port=%s;namespace=%s",
 		sandboxHome, token, "127.0.0.1", port, DefaultNamespace)
+	// Construct the final Java startup arguments
 	javaArgs := fmt.Sprintf(`%s -jar %s/sandbox-core.jar %s "%s/sandbox-agent.jar" "%s"`,
 		jvmOpts, sandboxLibPath, pid, sandboxLibPath, sandboxAttachArgs)
 	return javaArgs
@@ -176,6 +189,14 @@ func getSandboxToken(ctx context.Context) (string, error) {
 }
 
 func getToolJar(ctx context.Context, javaHome string) string {
+	javaMajorVersion, err := getJavaMajorVersion(ctx, javaHome)
+	if err != nil {
+		log.Warnf(ctx, "get java major version failed, err: %v", err)
+	}
+	if javaMajorVersion >= 9 {
+		log.Infof(ctx, "Java version %s (>= 9) no need tools.jar, skip getToolJar")
+		return ""
+	}
 	toolsJar := path.Join(util.GetLibHome(), "sandbox", "tools.jar")
 	originalJar := path.Join(javaHome, "lib/tools.jar")
 	if util.IsExist(originalJar) {
@@ -256,6 +277,52 @@ func getJavaCommandLine(ctx context.Context, pid string) (commandSlice []string,
 		return nil, err
 	}
 	return processObj.CmdlineSlice()
+}
+
+func getJavaMajorVersion(ctx context.Context, javaHome string) (int, error) {
+	// build javaPath
+	javaPath := "java"
+	if javaHome != "" {
+		javaPath = filepath.Join(javaHome, "bin", "java")
+	}
+	if _, err := os.Stat(javaPath); os.IsNotExist(err) {
+		log.Warnf(ctx, "Java is not exists: %s", javaPath)
+		return 0, err
+	}
+	// execute `$JAVA_HOME/bin/java -version` in shell
+	cmd := exec.Command(javaPath, "-version")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr // Java version info belongs to stderr
+	err := cmd.Run()
+	if err != nil {
+		return 0, fmt.Errorf("can not execute Java: %v", err)
+	}
+	// get full version tag (support "1.8.0_271" and "11.0.16" for example)
+	lines := strings.Split(stderr.String(), "\n")
+	if len(lines) == 0 {
+		return 0, fmt.Errorf("can not resolve Java version")
+	}
+	re := regexp.MustCompile(`"([\d._]+)"`)
+	matches := re.FindStringSubmatch(lines[0])
+	if len(matches) < 2 {
+		return 0, fmt.Errorf("can not find Java version tag")
+	}
+	fullVersion := matches[1] // eg: "11.0.16" or "1.8.0_271"
+	// get major version
+	parts := strings.Split(fullVersion, ".")
+	var majorVersion string
+	if parts[0] == "1" && len(parts) > 1 { // Java 8-
+		majorVersion = parts[1]
+	} else { // Java 9+
+		majorVersion = parts[0]
+	}
+	// convert major version to int
+	var major int
+	_, err = fmt.Scanf(majorVersion, "%d", &major)
+	if err != nil {
+		return 0, fmt.Errorf("can not resolve Java major version %s: %v", majorVersion, err)
+	}
+	return major, nil
 }
 
 func Detach(ctx context.Context, port string) *spec.Response {
